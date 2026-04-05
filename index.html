@@ -169,7 +169,7 @@
   <div id="app"></div>
 
   <script type="text/babel">
-    const { useState } = React;
+    const { useState, useEffect, useCallback } = React;
 
     const GRID_SIZE = 4;
 
@@ -224,7 +224,7 @@
       return { id: nextId++, value, row, col };
     }
 
-    // Place tiles onto a board grid
+    // Place tiles onto a board grid (value only)
     function tilesToBoard(tiles) {
       const board = emptyBoard();
       tiles.forEach(t => { board[t.row][t.col] = t.value; });
@@ -254,8 +254,83 @@
       return tiles;
     }
 
-    // Compute absolute position of a tile inside the tiles-layer
-    // Each cell: calc((100% - 30px) / 4). Gap between cells: 10px.
+    // ---- Slide / merge a single row or column ----
+    // `line` is an array of tile objects (or null) ordered in the slide direction.
+    // Returns { tiles: newTileObjects, scoreGain }.
+    // Tiles slide toward index 0 (caller reverses line when sliding toward far end).
+    function slideLine(line) {
+      const nonEmpty = line.filter(Boolean);
+      const out = [];
+      let scoreGain = 0;
+      let i = 0;
+      while (i < nonEmpty.length) {
+        if (i + 1 < nonEmpty.length && nonEmpty[i].value === nonEmpty[i + 1].value) {
+          // Merge: produce one tile of double value
+          const val = nonEmpty[i].value * 2;
+          scoreGain += val;
+          out.push({ value: val, isMerged: true });
+          i += 2;
+        } else {
+          out.push({ value: nonEmpty[i].value, isMerged: false });
+          i++;
+        }
+      }
+      // Pad to GRID_SIZE with nulls
+      while (out.length < GRID_SIZE) out.push(null);
+      return { out, scoreGain };
+    }
+
+    // ---- Apply a directional move to the full tile list ----
+    // Returns { tiles, scoreGain, moved }
+    function applyMove(tiles, direction) {
+      const isHoriz  = direction === "left" || direction === "right";
+      const toFarEnd = direction === "right" || direction === "down";
+
+      let totalScore = 0;
+      const newTiles = [];
+
+      for (let i = 0; i < GRID_SIZE; i++) {
+        // Extract one row (isHoriz) or column (!isHoriz)
+        const line = [];
+        for (let j = 0; j < GRID_SIZE; j++) {
+          const r = isHoriz ? i : j;
+          const c = isHoriz ? j : i;
+          line.push(tiles.find(t => t.row === r && t.col === c) || null);
+        }
+
+        // Sliding toward far end: reverse so merge logic works from that end
+        const ordered = toFarEnd ? [...line].reverse() : line;
+        const { out, scoreGain } = slideLine(ordered);
+        totalScore += scoreGain;
+
+        // Reverse back if we reversed earlier
+        const positioned = toFarEnd ? [...out].reverse() : out;
+
+        for (let j = 0; j < GRID_SIZE; j++) {
+          if (positioned[j]) {
+            const r = isHoriz ? i : j;
+            const c = isHoriz ? j : i;
+            const t = createTile(positioned[j].value, r, c);
+            t.isMerged = positioned[j].isMerged;
+            newTiles.push(t);
+          }
+        }
+      }
+
+      // Detect whether anything actually moved or merged
+      const oldBoard = tilesToBoard(tiles);
+      const newBoard = tilesToBoard(newTiles);
+      let moved = false;
+      outer: for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          if (oldBoard[r][c] !== newBoard[r][c]) { moved = true; break outer; }
+        }
+      }
+
+      return { tiles: newTiles, scoreGain: totalScore, moved };
+    }
+
+    // Compute absolute position style for a tile inside the tiles-layer
     function tilePositionStyle(row, col) {
       const cellSize = "calc((100% - 30px) / 4)";
       const left = col === 0 ? "0px" : `calc(${col} * ((100% - 30px) / 4) + ${col * 10}px)`;
@@ -265,14 +340,57 @@
 
     // ---- App ----
     function App() {
-      const [tiles, setTiles] = useState(() => initGame());
-      const [score] = useState(0);
-      const [best] = useState(() => parseInt(localStorage.getItem("2048-best") || "0", 10));
+      const [tiles, setTiles]   = useState(() => initGame());
+      const [score, setScore]   = useState(0);
+      const [best,  setBest]    = useState(() => parseInt(localStorage.getItem("2048-best") || "0", 10));
 
       function newGame() {
         nextId = 1;
         setTiles(initGame());
+        setScore(0);
       }
+
+      // Handle a directional move
+      const handleMove = useCallback((direction) => {
+        setTiles(prev => {
+          const { tiles: moved, scoreGain, moved: didMove } = applyMove(prev, direction);
+          if (!didMove) return prev;
+
+          // Spawn a new tile after a valid move
+          const board  = tilesToBoard(moved);
+          const spawn  = spawnTile(board);
+          const next   = spawn ? [...moved, spawn] : moved;
+
+          // Update scores
+          setScore(s => {
+            const ns = s + scoreGain;
+            setBest(b => {
+              const nb = Math.max(b, ns);
+              localStorage.setItem("2048-best", String(nb));
+              return nb;
+            });
+            return ns;
+          });
+
+          return next;
+        });
+      }, []);
+
+      // Keyboard input: arrow keys only (WASD could conflict with browser shortcuts)
+      useEffect(() => {
+        const KEY_DIR = {
+          ArrowLeft: "left", ArrowRight: "right",
+          ArrowUp: "up",    ArrowDown: "down",
+        };
+        function onKey(e) {
+          if (KEY_DIR[e.key]) {
+            e.preventDefault();
+            handleMove(KEY_DIR[e.key]);
+          }
+        }
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+      }, [handleMove]);
 
       return (
         <div id="game-root">
@@ -296,14 +414,12 @@
 
           {/* Board */}
           <div className="board-wrapper">
-            {/* Background: empty cell grid */}
             <div className="board">
               {Array.from({ length: 16 }).map((_, i) => (
                 <div key={i} className="cell" />
               ))}
             </div>
 
-            {/* Tile layer sits on top of the empty cells */}
             <div className="tiles-layer">
               {tiles.map(tile => {
                 const { background, color } = getTileStyle(tile.value);
