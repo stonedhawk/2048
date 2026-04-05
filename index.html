@@ -221,11 +221,19 @@
       flex-shrink: 0;
     }
 
-    /* ---- Responsive ---- */
+    /* ---- Responsive: board scales with viewport on small screens ---- */
     @media (max-width: 520px) {
+      #app { max-width: 96vmin; }
       .title { font-size: 52px; }
       .score-box { min-width: 64px; padding: 5px 12px; }
       .score-box .value { font-size: 18px; }
+      .overlay-title { font-size: 36px; }
+    }
+
+    @media (max-width: 380px) {
+      .title { font-size: 40px; }
+      .score-box .value { font-size: 15px; }
+      .new-game-btn { padding: 8px 14px; font-size: 13px; }
     }
   </style>
 </head>
@@ -233,7 +241,7 @@
   <div id="app"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback } = React;
+    const { useState, useEffect, useCallback, useRef } = React;
 
     const GRID_SIZE = 4;
 
@@ -478,7 +486,7 @@
         });
       }, [gameOver, winShown]);
 
-      // Keyboard input: arrow keys only (WASD could conflict with browser shortcuts)
+      // Keyboard input: arrow keys
       useEffect(() => {
         const KEY_DIR = {
           ArrowLeft: "left", ArrowRight: "right",
@@ -493,6 +501,36 @@
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
       }, [handleMove]);
+
+      // Touch / swipe support
+      const touchStart = useRef(null);
+
+      function onTouchStart(e) {
+        const t = e.touches[0];
+        touchStart.current = { x: t.clientX, y: t.clientY };
+      }
+
+      function onTouchMove(e) {
+        // Prevent page scroll while swiping on the board
+        e.preventDefault();
+      }
+
+      function onTouchEnd(e) {
+        if (!touchStart.current) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - touchStart.current.x;
+        const dy = t.clientY - touchStart.current.y;
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+        touchStart.current = null;
+        // Minimum 30px swipe to register as a move
+        if (Math.max(adx, ady) < 30) return;
+        if (adx > ady) {
+          handleMove(dx > 0 ? "right" : "left");
+        } else {
+          handleMove(dy > 0 ? "down" : "up");
+        }
+      }
 
       return (
         <div id="game-root">
@@ -514,8 +552,13 @@
             </div>
           </div>
 
-          {/* Board */}
-          <div className="board-wrapper">
+          {/* Board -- touch handlers live here to capture swipes on the whole grid */}
+          <div
+            className="board-wrapper"
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+          >
             <div className="board">
               {Array.from({ length: 16 }).map((_, i) => (
                 <div key={i} className="cell" />
