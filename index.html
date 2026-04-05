@@ -155,6 +155,51 @@
     .tile-new    { animation: tileAppear 0.2s ease-in-out forwards; }
     .tile-merged { animation: tilePop    0.2s ease-in-out forwards; }
 
+    /* ---- Overlay (game over / win) ---- */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(238, 228, 218, 0.73);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      z-index: 10;
+    }
+
+    .overlay-title {
+      font-size: 48px;
+      font-weight: 800;
+      color: #776e65;
+    }
+
+    .overlay-score {
+      font-size: 17px;
+      font-weight: 600;
+      color: #776e65;
+    }
+
+    .overlay-buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    .overlay-btn {
+      background: #8f7a66;
+      color: #f9f6f2;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 22px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .overlay-btn:hover { background: #7f6a56; }
+
     /* ---- Below board ---- */
     .below-board {
       display: flex;
@@ -355,6 +400,19 @@
       return { tiles: newTiles, scoreGain: totalScore, moved };
     }
 
+    // ---- Game over: no empty cells and no adjacent same-value pairs ----
+    function checkGameOver(tiles) {
+      const board = tilesToBoard(tiles);
+      if (emptyCells(board).length > 0) return false;
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          if (c + 1 < GRID_SIZE && board[r][c] === board[r][c + 1]) return false;
+          if (r + 1 < GRID_SIZE && board[r][c] === board[r + 1][c]) return false;
+        }
+      }
+      return true;
+    }
+
     // Compute absolute position style for a tile inside the tiles-layer
     function tilePositionStyle(row, col) {
       const cellSize = "calc((100% - 30px) / 4)";
@@ -365,18 +423,28 @@
 
     // ---- App ----
     function App() {
-      const [tiles, setTiles]   = useState(() => initGame());
-      const [score, setScore]   = useState(0);
-      const [best,  setBest]    = useState(() => parseInt(localStorage.getItem("2048-best") || "0", 10));
+      const [tiles,    setTiles]    = useState(() => initGame());
+      const [score,    setScore]    = useState(0);
+      const [best,     setBest]     = useState(() => parseInt(localStorage.getItem("2048-best") || "0", 10));
+      const [gameOver, setGameOver] = useState(false);
+      const [won,      setWon]      = useState(false);
+      // winShown: once the win overlay has been shown once, never show it again this game
+      const [winShown, setWinShown] = useState(false);
 
       function newGame() {
         nextId = 1;
         setTiles(initGame());
         setScore(0);
+        setGameOver(false);
+        setWon(false);
+        setWinShown(false);
       }
 
       // Handle a directional move
       const handleMove = useCallback((direction) => {
+        // Ignore input while overlays are up (except keep-going after win)
+        if (gameOver) return;
+
         setTiles(prev => {
           const { tiles: moved, scoreGain, moved: didMove } = applyMove(prev, direction);
           if (!didMove) return prev;
@@ -397,9 +465,18 @@
             return ns;
           });
 
+          // Win detection: show overlay only once per game
+          if (!winShown && next.some(t => t.value >= 2048)) {
+            setWon(true);
+            setWinShown(true);
+          }
+
+          // Game over detection
+          if (checkGameOver(next)) setGameOver(true);
+
           return next;
         });
-      }, []);
+      }, [gameOver, winShown]);
 
       // Keyboard input: arrow keys only (WASD could conflict with browser shortcuts)
       useEffect(() => {
@@ -469,6 +546,29 @@
                 );
               })}
             </div>
+
+            {/* Game over overlay */}
+            {gameOver && (
+              <div className="overlay">
+                <div className="overlay-title">Game Over!</div>
+                <div className="overlay-score">Score: {score}</div>
+                <div className="overlay-buttons">
+                  <button className="overlay-btn" onClick={newGame}>Try Again</button>
+                </div>
+              </div>
+            )}
+
+            {/* Win overlay -- shown once; "Keep Going" dismisses it without resetting */}
+            {won && !gameOver && (
+              <div className="overlay">
+                <div className="overlay-title">You Win!</div>
+                <div className="overlay-score">Score: {score}</div>
+                <div className="overlay-buttons">
+                  <button className="overlay-btn" onClick={() => setWon(false)}>Keep Going</button>
+                  <button className="overlay-btn" onClick={newGame}>New Game</button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Below board */}
