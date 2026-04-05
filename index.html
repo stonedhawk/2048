@@ -134,7 +134,26 @@
       justify-content: center;
       font-weight: 800;
       line-height: 1;
+      /* Slide animation: smoothly transition position changes */
+      transition: left 0.15s ease-in-out, top 0.15s ease-in-out;
     }
+
+    /* Spawn: new tile scales in from nothing */
+    @keyframes tileAppear {
+      0%   { transform: scale(0); }
+      60%  { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    /* Merge pop: briefly scale up on the merged result tile */
+    @keyframes tilePop {
+      0%   { transform: scale(1); }
+      40%  { transform: scale(1.15); }
+      100% { transform: scale(1); }
+    }
+
+    .tile-new    { animation: tileAppear 0.2s ease-in-out forwards; }
+    .tile-merged { animation: tilePop    0.2s ease-in-out forwards; }
 
     /* ---- Below board ---- */
     .below-board {
@@ -219,9 +238,9 @@
 
     let nextId = 1;
 
-    // Create a tile object
-    function createTile(value, row, col) {
-      return { id: nextId++, value, row, col };
+    // Create a tile object; isNew triggers the spawn animation
+    function createTile(value, row, col, isNew = false) {
+      return { id: nextId++, value, row, col, isNew, isMerged: false };
     }
 
     // Place tiles onto a board grid (value only)
@@ -237,7 +256,7 @@
       if (!cells.length) return null;
       const { row, col } = cells[Math.floor(Math.random() * cells.length)];
       const value = Math.random() < 0.9 ? 2 : 4;
-      return createTile(value, row, col);
+      return createTile(value, row, col, true);  // isNew = true for spawn animation
     }
 
     // Build the initial two-tile state
@@ -254,10 +273,11 @@
       return tiles;
     }
 
-    // ---- Slide / merge a single row or column ----
-    // `line` is an array of tile objects (or null) ordered in the slide direction.
-    // Returns { tiles: newTileObjects, scoreGain }.
-    // Tiles slide toward index 0 (caller reverses line when sliding toward far end).
+    // ---- Slide / merge one row or column with ID preservation ----
+    // `line`: array of tile objects (or null) ordered in the slide direction (toward index 0).
+    // Non-merged tiles keep their existing IDs so React reuses the DOM node and
+    // the CSS `left/top` transition fires automatically.
+    // Merged-result tiles get new IDs and isMerged=true for the pop animation.
     function slideLine(line) {
       const nonEmpty = line.filter(Boolean);
       const out = [];
@@ -265,17 +285,17 @@
       let i = 0;
       while (i < nonEmpty.length) {
         if (i + 1 < nonEmpty.length && nonEmpty[i].value === nonEmpty[i + 1].value) {
-          // Merge: produce one tile of double value
+          // Merge pair: emit a new tile with a fresh ID (merge pop animation)
           const val = nonEmpty[i].value * 2;
           scoreGain += val;
-          out.push({ value: val, isMerged: true });
+          out.push({ id: nextId++, value: val, isMerged: true, isNew: false });
           i += 2;
         } else {
-          out.push({ value: nonEmpty[i].value, isMerged: false });
+          // Slide: reuse existing ID so the DOM node transitions to its new position
+          out.push({ id: nonEmpty[i].id, value: nonEmpty[i].value, isMerged: false, isNew: false });
           i++;
         }
       }
-      // Pad to GRID_SIZE with nulls
       while (out.length < GRID_SIZE) out.push(null);
       return { out, scoreGain };
     }
@@ -290,7 +310,7 @@
       const newTiles = [];
 
       for (let i = 0; i < GRID_SIZE; i++) {
-        // Extract one row (isHoriz) or column (!isHoriz)
+        // Extract one row (isHoriz) or column (!isHoriz), ordered in slide direction
         const line = [];
         for (let j = 0; j < GRID_SIZE; j++) {
           const r = isHoriz ? i : j;
@@ -298,26 +318,31 @@
           line.push(tiles.find(t => t.row === r && t.col === c) || null);
         }
 
-        // Sliding toward far end: reverse so merge logic works from that end
+        // For slides toward the far end, reverse so index 0 = far end
         const ordered = toFarEnd ? [...line].reverse() : line;
         const { out, scoreGain } = slideLine(ordered);
         totalScore += scoreGain;
 
-        // Reverse back if we reversed earlier
+        // Reverse back to real coordinates
         const positioned = toFarEnd ? [...out].reverse() : out;
 
         for (let j = 0; j < GRID_SIZE; j++) {
           if (positioned[j]) {
             const r = isHoriz ? i : j;
             const c = isHoriz ? j : i;
-            const t = createTile(positioned[j].value, r, c);
-            t.isMerged = positioned[j].isMerged;
-            newTiles.push(t);
+            newTiles.push({
+              id:       positioned[j].id,
+              value:    positioned[j].value,
+              row:      r,
+              col:      c,
+              isNew:    positioned[j].isNew,
+              isMerged: positioned[j].isMerged,
+            });
           }
         }
       }
 
-      // Detect whether anything actually moved or merged
+      // Detect whether anything changed (needed to decide whether to spawn)
       const oldBoard = tilesToBoard(tiles);
       const newBoard = tilesToBoard(newTiles);
       let moved = false;
@@ -423,10 +448,15 @@
             <div className="tiles-layer">
               {tiles.map(tile => {
                 const { background, color } = getTileStyle(tile.value);
+                const cls = tile.isNew
+                  ? "tile tile-new"
+                  : tile.isMerged
+                    ? "tile tile-merged"
+                    : "tile";
                 return (
                   <div
                     key={tile.id}
-                    className="tile"
+                    className={cls}
                     style={{
                       ...tilePositionStyle(tile.row, tile.col),
                       background,
