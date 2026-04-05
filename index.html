@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2048</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #faf8ef;
+      font-family: "Clear Sans", "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px 16px 40px;
+    }
+
+    #app {
+      width: 100%;
+      max-width: 500px;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .title {
+      font-size: 72px;
+      font-weight: 800;
+      color: #776e65;
+      line-height: 1;
+    }
+
+    .scores-area {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .score-boxes {
+      display: flex;
+      gap: 8px;
+    }
+
+    .score-box {
+      background: #bbada0;
+      border-radius: 6px;
+      padding: 6px 18px;
+      text-align: center;
+      min-width: 80px;
+    }
+
+    .score-box .label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #eee4da;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .score-box .value {
+      font-size: 22px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.2;
+    }
+
+    .new-game-btn {
+      background: #8f7a66;
+      color: #f9f6f2;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 20px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .new-game-btn:hover {
+      background: #7f6a56;
+    }
+
+    /* ---- Board ---- */
+    .board-wrapper {
+      position: relative;
+    }
+
+    .board {
+      background: #bbada0;
+      border-radius: 8px;
+      padding: 10px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      width: 100%;
+      aspect-ratio: 1;
+    }
+
+    .cell {
+      background: #cdc1b4;
+      border-radius: 4px;
+    }
+
+    /* ---- Tiles ---- */
+    .tiles-layer {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      pointer-events: none;
+    }
+
+    .tile {
+      position: absolute;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    /* ---- Below board ---- */
+    .below-board {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-top: 14px;
+      gap: 8px;
+    }
+
+    .instructions {
+      font-size: 13px;
+      color: #776e65;
+    }
+
+    .signature {
+      font-size: 11px;
+      color: #b0a898;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 520px) {
+      .title { font-size: 52px; }
+      .score-box { min-width: 64px; padding: 5px 12px; }
+      .score-box .value { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script type="text/babel">
+    const { useState } = React;
+
+    const GRID_SIZE = 4;
+
+    // Classic 2048 tile color palette
+    const TILE_STYLES = {
+      2:    { background: "#eee4da", color: "#776e65" },
+      4:    { background: "#ede0c8", color: "#776e65" },
+      8:    { background: "#f2b179", color: "#f9f6f2" },
+      16:   { background: "#f59563", color: "#f9f6f2" },
+      32:   { background: "#f67c5f", color: "#f9f6f2" },
+      64:   { background: "#f65e3b", color: "#f9f6f2" },
+      128:  { background: "#edcf72", color: "#f9f6f2" },
+      256:  { background: "#edcc61", color: "#f9f6f2" },
+      512:  { background: "#edc850", color: "#f9f6f2" },
+      1024: { background: "#edc53f", color: "#f9f6f2" },
+      2048: { background: "#edc22e", color: "#f9f6f2" },
+    };
+    const SUPER_STYLE = { background: "#3c3a32", color: "#f9f6f2" };
+
+    function getTileStyle(value) {
+      return TILE_STYLES[value] || SUPER_STYLE;
+    }
+
+    // Font size by number of digits
+    function getTileFontSize(value) {
+      const d = String(value).length;
+      if (d <= 1) return "55px";
+      if (d === 2) return "45px";
+      if (d === 3) return "38px";
+      if (d === 4) return "30px";
+      return "24px";
+    }
+
+    // Build a blank 4x4 board (null = empty)
+    function emptyBoard() {
+      return Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+    }
+
+    // Return all empty cell positions
+    function emptyCells(board) {
+      const cells = [];
+      for (let r = 0; r < GRID_SIZE; r++)
+        for (let c = 0; c < GRID_SIZE; c++)
+          if (!board[r][c]) cells.push({ row: r, col: c });
+      return cells;
+    }
+
+    let nextId = 1;
+
+    // Create a tile object
+    function createTile(value, row, col) {
+      return { id: nextId++, value, row, col };
+    }
+
+    // Place tiles onto a board grid
+    function tilesToBoard(tiles) {
+      const board = emptyBoard();
+      tiles.forEach(t => { board[t.row][t.col] = t.value; });
+      return board;
+    }
+
+    // Spawn a tile (90% chance value=2, 10% chance value=4) in a random empty cell
+    function spawnTile(board) {
+      const cells = emptyCells(board);
+      if (!cells.length) return null;
+      const { row, col } = cells[Math.floor(Math.random() * cells.length)];
+      const value = Math.random() < 0.9 ? 2 : 4;
+      return createTile(value, row, col);
+    }
+
+    // Build the initial two-tile state
+    function initGame() {
+      const tiles = [];
+      const b1 = emptyBoard();
+      const t1 = spawnTile(b1);
+      if (t1) {
+        tiles.push(t1);
+        const b2 = tilesToBoard(tiles);
+        const t2 = spawnTile(b2);
+        if (t2) tiles.push(t2);
+      }
+      return tiles;
+    }
+
+    // Compute absolute position of a tile inside the tiles-layer
+    // Each cell: calc((100% - 30px) / 4). Gap between cells: 10px.
+    function tilePositionStyle(row, col) {
+      const cellSize = "calc((100% - 30px) / 4)";
+      const left = col === 0 ? "0px" : `calc(${col} * ((100% - 30px) / 4) + ${col * 10}px)`;
+      const top  = row === 0 ? "0px" : `calc(${row} * ((100% - 30px) / 4) + ${row * 10}px)`;
+      return { width: cellSize, height: cellSize, left, top };
+    }
+
+    // ---- App ----
+    function App() {
+      const [tiles, setTiles] = useState(() => initGame());
+      const [score] = useState(0);
+      const [best] = useState(() => parseInt(localStorage.getItem("2048-best") || "0", 10));
+
+      function newGame() {
+        nextId = 1;
+        setTiles(initGame());
+      }
+
+      return (
+        <div id="game-root">
+          {/* Header */}
+          <div className="header">
+            <div className="title">2048</div>
+            <div className="scores-area">
+              <div className="score-boxes">
+                <div className="score-box">
+                  <div className="label">Score</div>
+                  <div className="value">{score}</div>
+                </div>
+                <div className="score-box">
+                  <div className="label">Best</div>
+                  <div className="value">{best}</div>
+                </div>
+              </div>
+              <button className="new-game-btn" onClick={newGame}>New Game</button>
+            </div>
+          </div>
+
+          {/* Board */}
+          <div className="board-wrapper">
+            {/* Background: empty cell grid */}
+            <div className="board">
+              {Array.from({ length: 16 }).map((_, i) => (
+                <div key={i} className="cell" />
+              ))}
+            </div>
+
+            {/* Tile layer sits on top of the empty cells */}
+            <div className="tiles-layer">
+              {tiles.map(tile => {
+                const { background, color } = getTileStyle(tile.value);
+                return (
+                  <div
+                    key={tile.id}
+                    className="tile"
+                    style={{
+                      ...tilePositionStyle(tile.row, tile.col),
+                      background,
+                      color,
+                      fontSize: getTileFontSize(tile.value),
+                    }}
+                  >
+                    {tile.value}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Below board */}
+          <div className="below-board">
+            <div className="instructions">Use arrow keys or swipe to play</div>
+            <div className="signature">Created by Stonedhawk (Rahul)</div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("app")).render(<App />);
+  </script>
+</body>
+</html>
